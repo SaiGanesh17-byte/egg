@@ -1,4 +1,5 @@
 import sqlite3
+import re
 from tree_sitter import Node
 from typing import List, Dict, Set, Optional
 from .base_parser import BaseParser
@@ -637,9 +638,55 @@ class JavaParser(BaseParser):
 
         self.scope_defs[-1] = merged
 
+    def _infer_java_receiver_type(self, code: str, receiver_name: str, enclosing_class: str) -> str:
+        if receiver_name == "this" or receiver_name == "super":
+            return enclosing_class
+        # Check local variable declarations
+        pat = re.compile(r"\b([A-Za-z0-9_]+)\s+" + re.escape(receiver_name) + r"\b")
+        m = pat.search(code)
+        if m:
+            return m.group(1)
+        # Check if receiver name itself starts with uppercase (static method call on a Class)
+        if receiver_name and receiver_name[0].isupper() and "." not in receiver_name:
+            return receiver_name
+        return receiver_name
+
     def visit_method_invocation(self, node: Node):
-        call_target = self._resolve_call_target(node)
-        if call_target and self.current_scope:
+        method_name = self._resolve_call_target(node)
+        if method_name and self.current_scope:
+            receiver_node = node.child_by_field_name("object")
+            enclosing_class = self.class_stack[-1] if self.class_stack else ""
+            
+            # Default fallback target
+            call_target = method_name
+            
+            # Infer receiver type if dot notation is used
+            if receiver_node:
+                receiver_name = self._get_text(receiver_node).strip()
+                parent = node.parent
+                while parent and parent.type not in ("method_declaration", "constructor_declaration"):
+                    parent = parent.parent
+                
+                if parent:
+                    method_code = self._get_text(parent)
+                    receiver_type = self._infer_java_receiver_type(method_code, receiver_name, enclosing_class)
+                    if self.import_resolver:
+                        resolved, _ = self.import_resolver.resolve(receiver_type, self.defined_classes)
+                        resolved_class = resolved[0] if isinstance(resolved, list) and resolved else resolved
+                        if resolved_class:
+                            call_target = f"{resolved_class}.{method_name}"
+            else:
+                if enclosing_class:
+                    if self.import_resolver:
+                        resolved, _ = self.import_resolver.resolve(enclosing_class, self.defined_classes)
+                        resolved_class = resolved[0] if isinstance(resolved, list) and resolved else resolved
+                        if resolved_class:
+                            call_target = f"{resolved_class}.{method_name}"
+                        else:
+                            call_target = f"{enclosing_class}.{method_name}"
+                    else:
+                        call_target = f"{enclosing_class}.{method_name}"
+            
             self.collector.add_edge(self.current_scope[-1], call_target, "CALLS", label="INVOKE")
         self.generic_visit(node)
 

@@ -82,7 +82,9 @@ def test_java_resolution_scenarios(temp_repo, db_path):
             video.accept("test");
 
             TwoSubInterface one = new SubOne();
+            one.execute();
             TwoSubInterface two = new SubTwo();
+            two.execute();
 
             TentativeImpl tent = new TentativeImpl();
         }
@@ -139,6 +141,18 @@ def test_java_resolution_scenarios(temp_repo, db_path):
         res5 = engine.resolve_call_site("media.external.TentativeInterface", "resolve", cur)
         assert res5["resolution"] == "rta-resolved-tentative", f"Expected rta-resolved-tentative, got {res5['resolution']}"
         assert "media.TentativeImpl" in res5["classes"]
+
+        # Test Case 6: Aggregate DB Stats Confidence Summary
+        from egg.server.app import get_db_stats
+        db_storage_dir = os.path.dirname(db_path)
+        app_expected_db = get_db_path_for_repo(temp_repo, db_storage_dir)
+        os.makedirs(os.path.dirname(app_expected_db), exist_ok=True)
+        shutil.copy(db_path, app_expected_db)
+        
+        stats = get_db_stats(repo_path=temp_repo, db_storage_path=db_storage_dir)
+        conf = stats["confidence_summary"]
+        assert conf["high"] > 0, f"Expected at least one high confidence resolved call, got: {conf}"
+        assert conf["medium"] > 0, f"Expected at least one medium confidence resolved call, got: {conf}"
 
     print("  Java resolution scenarios passed!")
 
