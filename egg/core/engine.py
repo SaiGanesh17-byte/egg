@@ -80,13 +80,28 @@ class EggEngine:
         indexed_files = 0
         skipped_files = 0
         
+        # Fetch defined classes and existing hashes once at start of Pass 2
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT qualified_name FROM discovered_declarations")
+            defined_classes = {row[0] for row in cur.fetchall()}
+            
+            cur.execute("SELECT file_path, content_hash FROM file_hashes")
+            existing_hashes = {row[0]: row[1] for row in cur.fetchall()}
+        
         for file_path in files_to_index:
             try:
                 rel_path = Path(file_path).relative_to(repo_path).as_posix()
                 with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                     code = f.read()
                 
-                if self.process_file(rel_path, code, repo_path):
+                # Check in-memory first to avoid database locking/query overhead for unchanged files
+                collector = GraphCollector(rel_path, code)
+                if existing_hashes.get(rel_path) == collector.file_hash:
+                    skipped_files += 1
+                    continue
+                
+                if self.process_file_with_data(rel_path, code, repo_path, defined_classes):
                     indexed_files += 1
                 else:
                     skipped_files += 1
@@ -218,28 +233,27 @@ class EggEngine:
     def process_file(self, file_path: str, source_code: str, repo_path: str) -> bool:
         file_path = Path(file_path).as_posix()
         collector = GraphCollector(file_path, source_code)
-        
         if not self.should_reindex(file_path, collector.file_hash):
             return False
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT qualified_name FROM discovered_declarations")
+            defined_classes = {row[0] for row in cur.fetchall()}
+        return self.process_file_with_data(file_path, source_code, repo_path, defined_classes)
+
+    def process_file_with_data(self, file_path: str, source_code: str, repo_path: str, defined_classes: set) -> bool:
+        file_path = Path(file_path).as_posix()
+        collector = GraphCollector(file_path, source_code)
 
         ext = Path(file_path).suffix.lower()
         parser = get_parser_for_extension(ext)
         if not parser:
-            print(f"[Egg Engine] Unsupported extension '{ext}' for {file_path} - skipping.")
             return False
 
         try:
             tree = parser.parse(bytes(source_code, "utf-8"))
         except Exception as e:
-            print(f"[Egg Engine] Tree-sitter parsing syntax error in {file_path}: {e}")
             return False
-
-        # Load defined classes once from DB for resolution passes
-        defined_classes = set()
-        with sqlite3.connect(self.db_path) as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT qualified_name FROM discovered_declarations")
-            defined_classes = {row[0] for row in cur.fetchall()}
 
         if ext == ".py":
             visitor = PythonParser(file_path, source_code, collector)
@@ -259,53 +273,55 @@ class EggEngine:
         try:
             visitor.parse(tree.root_node)
         except Exception as e:
-            print(f"[Egg Engine] Syntax/Visition error in {file_path} - skipping: {e}")
             return False
 
         self._save_to_db(collector)
         return True
 
     def _save_to_db(self, collector: GraphCollector):
-        norm_path = Path(collector.file_path).as_posix()
         with sqlite3.connect(self.db_path) as conn:
-            cur = conn.cursor()
-
-            # Clean previous graph slice for this file
-            cur.execute("DELETE FROM symbols WHERE file_path = ?", (norm_path,))
-            
-            # Safe cross-platform wildcard cleaning using explicit ESCAPE keyword
-            escaped_path = norm_path.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            cur.execute("DELETE FROM graph_edges WHERE source_id LIKE ? ESCAPE '\\' OR target_id LIKE ? ESCAPE '\\'", 
-                        (f"{escaped_path}%", f"{escaped_path}%"))
-            
-            cur.execute("DELETE FROM ai_contexts WHERE file_path = ?", (norm_path,))
-
-            for node in collector.nodes.values():
-                node_id = Path(node.id).as_posix() if "::" not in node.id else node.id
-                cur.execute("""
-                    INSERT OR REPLACE INTO symbols (id, name, kind, file_path, start_line, end_line, signature, content_hash)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (node_id, node.name, node.kind, norm_path, node.start_line, node.end_line, node.signature, collector.file_hash))
-
-            for edge in collector.edges:
-                cur.execute("""
-                    INSERT OR IGNORE INTO graph_edges (source_id, target_id, edge_type, label)
-                    VALUES (?, ?, ?, ?)
-                """, (edge.source, edge.target, edge.edge_type, edge.label))
-
-            for node_id, node in collector.nodes.items():
-                if node.kind == "FUNCTION":
-                    payload = self._generate_ai_payload(collector, node_id)
-                    cur.execute("""
-                        INSERT OR REPLACE INTO ai_contexts (symbol_id, file_path, context_payload, status)
-                        VALUES (?, ?, ?, 'PENDING')
-                    """, (node_id, norm_path, json.dumps(payload)))
-
-            cur.execute("""
-                INSERT OR REPLACE INTO file_hashes (file_path, content_hash, last_indexed)
-                VALUES (?, ?, CURRENT_TIMESTAMP)
-            """, (norm_path, collector.file_hash))
+            self._save_to_db_with_conn(collector, conn)
             conn.commit()
+
+    def _save_to_db_with_conn(self, collector: GraphCollector, conn):
+        norm_path = Path(collector.file_path).as_posix()
+        cur = conn.cursor()
+
+        # Clean previous graph slice for this file
+        cur.execute("DELETE FROM symbols WHERE file_path = ?", (norm_path,))
+        
+        # Safe cross-platform wildcard cleaning using explicit ESCAPE keyword
+        escaped_path = norm_path.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        cur.execute("DELETE FROM graph_edges WHERE source_id LIKE ? ESCAPE '\\' OR target_id LIKE ? ESCAPE '\\'", 
+                    (f"{escaped_path}%", f"{escaped_path}%"))
+        
+        cur.execute("DELETE FROM ai_contexts WHERE file_path = ?", (norm_path,))
+
+        for node in collector.nodes.values():
+            node_id = Path(node.id).as_posix() if "::" not in node.id else node.id
+            cur.execute("""
+                INSERT OR REPLACE INTO symbols (id, name, kind, file_path, start_line, end_line, signature, content_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (node_id, node.name, node.kind, norm_path, node.start_line, node.end_line, node.signature, collector.file_hash))
+
+        for edge in collector.edges:
+            cur.execute("""
+                INSERT OR IGNORE INTO graph_edges (source_id, target_id, edge_type, label)
+                VALUES (?, ?, ?, ?)
+            """, (edge.source, edge.target, edge.edge_type, edge.label))
+
+        for node_id, node in collector.nodes.items():
+            if node.kind == "FUNCTION":
+                payload = self._generate_ai_payload(collector, node_id)
+                cur.execute("""
+                    INSERT OR REPLACE INTO ai_contexts (symbol_id, file_path, context_payload, status)
+                    VALUES (?, ?, ?, 'PENDING')
+                """, (node_id, norm_path, json.dumps(payload)))
+
+        cur.execute("""
+            INSERT OR REPLACE INTO file_hashes (file_path, content_hash, last_indexed)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+        """, (norm_path, collector.file_hash))
 
     def _generate_ai_payload(self, collector: GraphCollector, symbol_id: str) -> Dict[str, Any]:
         target_node = collector.nodes[symbol_id]
