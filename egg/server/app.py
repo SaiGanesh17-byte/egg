@@ -8,6 +8,9 @@ from typing import Dict, Any, List, Set
 from egg.core.engine import EggEngine
 from egg.core.tree_builder import generate_tree
 
+import threading
+scan_lock = threading.Lock()
+
 app = FastAPI(title="Egg - Documentation Engine API")
 
 # Allow CORS for development simplicity
@@ -43,38 +46,39 @@ def scan_repository(request: ScanRequest):
         raise HTTPException(
             status_code=400, detail=f"Database storage path '{db_storage_path}' is not a directory. Please create it or configure it in Settings.")
 
-    try:
-        import time
-        start_time = time.time()
-        
-        db_path = get_db_path_for_repo(repo_path, db_storage_path)
-        engine = EggEngine(db_path)
-        stats = engine.scan_directory(repo_path)
-
-        # Query total indexed nodes (symbols) in SQLite DB
-        node_count = 0
-        if os.path.exists(db_path):
-            try:
-                with sqlite3.connect(db_path) as conn:
-                    cur = conn.cursor()
-                    cur.execute("SELECT COUNT(*) FROM symbols")
-                    node_count = cur.fetchone()[0]
-            except Exception as db_err:
-                print(f"[Egg Server] Error reading SQLite count: {db_err}")
-
-        return {
-            "status": "success",
-            "repo_path": repo_path,
-            "db_path": db_path,
-            "total_files": stats["total_files"],
-            "indexed_files": stats["indexed_files"],
-            "skipped_files": stats["skipped_files"],
-            "node_count": node_count,
-            "scan_time_seconds": round(time.time() - start_time, 2)
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to scan repository: {str(e)}")
+    with scan_lock:
+        try:
+            import time
+            start_time = time.time()
+            
+            db_path = get_db_path_for_repo(repo_path, db_storage_path)
+            engine = EggEngine(db_path)
+            stats = engine.scan_directory(repo_path)
+    
+            # Query total indexed nodes (symbols) in SQLite DB
+            node_count = 0
+            if os.path.exists(db_path):
+                try:
+                    with sqlite3.connect(db_path) as conn:
+                        cur = conn.cursor()
+                        cur.execute("SELECT COUNT(*) FROM symbols")
+                        node_count = cur.fetchone()[0]
+                except Exception as db_err:
+                    print(f"[Egg Server] Error reading SQLite count: {db_err}")
+    
+            return {
+                "status": "success",
+                "repo_path": repo_path,
+                "db_path": db_path,
+                "total_files": stats["total_files"],
+                "indexed_files": stats["indexed_files"],
+                "skipped_files": stats["skipped_files"],
+                "node_count": node_count,
+                "scan_time_seconds": round(time.time() - start_time, 2)
+            }
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, detail=f"Failed to scan repository: {str(e)}")
 
 
 @app.get("/api/tree")
