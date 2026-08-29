@@ -73,6 +73,32 @@ export default function Home() {
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [statsData, setStatsData] = useState<{ total: number; indexed: number; nodes: number; scan_time_seconds?: number } | null>(null);
+  const [scanProgress, setScanProgress] = useState<{ current: number; total: number; phase: string } | null>(null);
+
+  useEffect(() => {
+    let intervalId: any;
+    if (currentStep === 2) {
+      setScanProgress(null);
+      const pollProgress = async () => {
+        try {
+          const response = await fetch('http://localhost:8000/api/scan_progress');
+          if (response.ok) {
+            const data = await response.json();
+            setScanProgress(data);
+          }
+        } catch (err) {
+          console.error('Failed to fetch scan progress:', err);
+        }
+      };
+      pollProgress();
+      intervalId = setInterval(pollProgress, 300);
+    } else {
+      setScanProgress(null);
+    }
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [currentStep]);
 
   const [isLoadingTree, setIsLoadingTree] = useState(false);
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
@@ -427,12 +453,38 @@ export default function Home() {
         )}
 
         {/* Loading state indicator during CPG generation */}
-        {currentStep === 2 && (
-          <div className="mt-8 flex flex-col items-center space-y-2 text-xs text-zinc-400">
-            <Loader2 className="w-5 h-5 animate-spin text-purple-500" />
-            <span>Parsing source ASTs & resolving data flows...</span>
-          </div>
-        )}
+        {currentStep === 2 && (() => {
+          const progressPercent = scanProgress && scanProgress.total > 0
+            ? Math.round((scanProgress.current / scanProgress.total) * 100)
+            : 0;
+
+          const progressLabel = scanProgress 
+            ? scanProgress.phase === 'pass1' 
+              ? `Pass 1: Discovered namespace symbols in ${scanProgress.current}/${scanProgress.total} files`
+              : `Pass 2: Indexed CPG nodes/edges in ${scanProgress.current}/${scanProgress.total} files`
+            : 'Parsing source ASTs & resolving data flows...';
+
+          return (
+            <div className="mt-8 flex flex-col items-center space-y-4 text-xs text-zinc-400 w-full max-w-xl mx-auto bg-zinc-900/30 border border-zinc-900/60 p-5 rounded-2xl backdrop-blur-md">
+              <div className="flex items-center space-x-2.5">
+                <Loader2 className="w-4 h-4 animate-spin text-purple-500" />
+                <span className="font-semibold text-zinc-200 uppercase tracking-wider text-[10px]">Ingestion Progress</span>
+              </div>
+              
+              <div className="w-full h-3 bg-[#30D158] rounded-full overflow-hidden relative border border-white/5 shadow-inner">
+                <div 
+                  className="h-full bg-[#FF453A] transition-all duration-300 ease-out shadow-[0_0_8px_rgba(255,69,58,0.4)]" 
+                  style={{ width: `${progressPercent}%` }}
+                />
+              </div>
+              
+              <div className="flex justify-between w-full text-[10px] font-mono text-zinc-500">
+                <span className="truncate pr-4">{progressLabel}</span>
+                <span className="text-zinc-400 font-bold shrink-0">{progressPercent}%</span>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     );
   }

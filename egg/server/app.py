@@ -11,6 +11,18 @@ from egg.core.tree_builder import generate_tree
 import threading
 scan_lock = threading.Lock()
 
+scan_progress = {
+    "total": 0,
+    "current": 0,
+    "phase": "idle"  # "idle", "pass1", "pass2", "complete"
+}
+
+def update_progress(current: int, total: int, phase: str):
+    global scan_progress
+    scan_progress["current"] = current
+    scan_progress["total"] = total
+    scan_progress["phase"] = phase
+
 app = FastAPI(title="Egg - Documentation Engine API")
 
 # Allow CORS for development simplicity
@@ -50,10 +62,12 @@ def scan_repository(request: ScanRequest):
         try:
             import time
             start_time = time.time()
+            update_progress(0, 0, "pass1")
             
             db_path = get_db_path_for_repo(repo_path, db_storage_path)
             engine = EggEngine(db_path)
-            stats = engine.scan_directory(repo_path)
+            stats = engine.scan_directory(repo_path, progress_callback=update_progress)
+            update_progress(100, 100, "complete")
     
             # Query total indexed nodes (symbols) in SQLite DB
             node_count = 0
@@ -79,6 +93,11 @@ def scan_repository(request: ScanRequest):
         except Exception as e:
             raise HTTPException(
                 status_code=500, detail=f"Failed to scan repository: {str(e)}")
+
+
+@app.get("/api/scan_progress")
+def get_scan_progress():
+    return scan_progress
 
 
 @app.get("/api/tree")

@@ -22,7 +22,7 @@ class EggEngine:
         os.makedirs(os.path.dirname(self.db_path) or ".", exist_ok=True)
         self._init_db()
 
-    def scan_directory(self, repo_path: str) -> Dict[str, int]:
+    def scan_directory(self, repo_path: str, progress_callback=None) -> Dict[str, int]:
         from .gitignore import GitIgnoreMatcher
         repo_path = Path(repo_path).resolve().as_posix()
         
@@ -50,10 +50,11 @@ class EggEngine:
         # -------------------------------------------------------------
         # PASS 1: Global Namespace Discovery
         # -------------------------------------------------------------
-        print(f"[Egg Engine] Starting Pass 1 (Namespace Discovery) on {len(files_to_index)} files...")
+        total_files = len(files_to_index)
+        print(f"[Egg Engine] Starting Pass 1 (Namespace Discovery) on {total_files} files...")
         with sqlite3.connect(self.db_path) as conn:
             cur = conn.cursor()
-            for file_path in files_to_index:
+            for idx, file_path in enumerate(files_to_index, start=1):
                 try:
                     rel_path = Path(file_path).relative_to(repo_path).as_posix()
                     # Clean previous definitions for this file
@@ -70,13 +71,16 @@ class EggEngine:
                         """, (qname, kind, rel_path))
                 except Exception as e:
                     print(f"[Egg Engine] Pass 1 error on {file_path}: {e}")
+                
+                if progress_callback and (idx % 100 == 0 or idx == total_files):
+                    progress_callback(idx, total_files, "pass1")
+                    print(f"[Egg Engine] Pass 1: Discovered namespace symbols in {idx}/{total_files} files...")
             conn.commit()
 
         # -------------------------------------------------------------
         # PASS 2: Full CPG Indexing & Type Resolution
         # -------------------------------------------------------------
         print(f"[Egg Engine] Starting Pass 2 (CPG Indexing & Resolution)...")
-        total_files = len(files_to_index)
         indexed_files = 0
         skipped_files = 0
         
@@ -89,7 +93,7 @@ class EggEngine:
             cur.execute("SELECT file_path, content_hash FROM file_hashes")
             existing_hashes = {row[0]: row[1] for row in cur.fetchall()}
         
-        for file_path in files_to_index:
+        for idx, file_path in enumerate(files_to_index, start=1):
             try:
                 rel_path = Path(file_path).relative_to(repo_path).as_posix()
                 with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -108,6 +112,10 @@ class EggEngine:
             except Exception as e:
                 print(f"[Egg Engine] Pass 2 error on {file_path}: {e}")
                 skipped_files += 1
+
+            if progress_callback and (idx % 100 == 0 or idx == total_files):
+                progress_callback(idx, total_files, "pass2")
+                print(f"[Egg Engine] Pass 2: Indexed CPG nodes/edges in {idx}/{total_files} files...")
         
         # Clean up deleted files from the database (Garbage Collection)
         with sqlite3.connect(self.db_path) as conn:
