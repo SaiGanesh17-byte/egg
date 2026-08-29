@@ -162,6 +162,7 @@ class EggEngine:
                 signature TEXT,
                 content_hash TEXT NOT NULL
             );
+            CREATE INDEX IF NOT EXISTS idx_symbols_name_kind ON symbols (name, kind);
             CREATE TABLE IF NOT EXISTS graph_edges (
                 source_id TEXT NOT NULL,
                 target_id TEXT NOT NULL,
@@ -365,16 +366,20 @@ class EggEngine:
         # We query the `symbols` table to verify the method exists for that class.
         # In our schema, a method ID has the form 'file.java::ClassName.methodName(ParamTypes)'
         # or 'file.java::ClassName.methodName'. We match prefix 'candidate_id.method_name'.
+        cursor.execute("""
+            SELECT id FROM symbols 
+            WHERE name = ? AND kind = 'FUNCTION'
+        """, (method_name,))
+        matching_ids = [r[0] for r in cursor.fetchall()]
+
         filtered_candidates = []
         for qid, unqualified in raw_candidates:
             # Check if this class defines the method
             simple_class = qid.split('.')[-1]
-            cursor.execute("""
-                SELECT COUNT(*) FROM symbols 
-                WHERE (id LIKE ? OR id LIKE ?) AND kind = 'FUNCTION'
-            """, (f"%::{simple_class}.{method_name}(%", f"%::{simple_class}.{method_name}"))
-            
-            has_method = cursor.fetchone()[0] > 0
+            has_method = any(
+                f"::{simple_class}.{method_name}(" in mid or mid.endswith(f"::{simple_class}.{method_name}")
+                for mid in matching_ids
+            )
             if has_method:
                 filtered_candidates.append((qid, unqualified))
 

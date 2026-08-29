@@ -9,6 +9,8 @@ CREATE TABLE IF NOT EXISTS symbols (
     content_hash TEXT NOT NULL
 );
 
+CREATE INDEX IF NOT EXISTS idx_symbols_name_kind ON symbols (name, kind);
+
 CREATE TABLE IF NOT EXISTS graph_edges (
     source_id TEXT NOT NULL,
     target_id TEXT NOT NULL,
