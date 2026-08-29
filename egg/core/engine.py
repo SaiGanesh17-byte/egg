@@ -3,6 +3,8 @@ import json
 import sqlite3
 import os
 import re
+import sys
+sys.setrecursionlimit(50000)
 from pathlib import Path
 from typing import Dict, Any, List, Set
 from .cpg_builder import GraphCollector
