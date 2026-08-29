@@ -1,0 +1,23 @@
+# Dependencies and Build Directories
+node_modules/
+.next/
+out/
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+tsconfig.tsbuildinfo
+
+# App/Database specific
+.egg/
+*.db
+*.db-journal
+*.sqlite
+
+# Logs and OS files
+*.log
+.DS_Store
