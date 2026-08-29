@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { RepoSelector } from '@/components/RepoSelector';
 import { SidebarTree, FileTreeNode } from '@/components/SidebarTree';
 import { EggLogo } from '@/components/EggLogo';
+import { ConfidenceCard } from '@/components/ConfidenceCard';
 import { 
   FolderIcon, 
   Settings, 
@@ -49,6 +50,11 @@ interface DbStats {
   symbols_summary: Record<string, number>;
   edges_summary: Record<string, number>;
   sql_tables: Array<{ id: string; name: string }>;
+  confidence_summary?: {
+    high: number;
+    medium: number;
+    low: number;
+  };
 }
 
 export default function Home() {
@@ -706,6 +712,20 @@ export default function Home() {
                     <div className="text-[9px] font-mono text-zinc-650 truncate max-w-full">Dir: {globalDbPath}</div>
                   </div>
                 </div>
+
+                {/* Confidence Card */}
+                {dbStats.confidence_summary && (
+                  <ConfidenceCard
+                    highCount={dbStats.confidence_summary.high}
+                    mediumCount={dbStats.confidence_summary.medium}
+                    lowCount={dbStats.confidence_summary.low}
+                    totalCount={
+                      dbStats.confidence_summary.high +
+                      dbStats.confidence_summary.medium +
+                      dbStats.confidence_summary.low
+                    }
+                  />
+                )}
 
                 {/* Grid for Nodes and Edges breakdown */}
                 <div className="grid grid-cols-2 gap-6">

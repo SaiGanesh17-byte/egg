@@ -193,13 +193,48 @@ def get_db_stats(repo_path: str = Query(...), db_storage_path: str = Query(...))
             cur.execute("SELECT id, name FROM symbols WHERE kind = 'TABLE' ORDER BY name")
             sql_tables = [{"id": r[0], "name": r[1]} for r in cur.fetchall()]
             
+            # Query type-resolution confidence summary
+            cur.execute("""
+                SELECT DISTINCT target_id FROM graph_edges 
+                WHERE edge_type = 'CALLS' AND target_id IS NOT NULL
+            """)
+            targets = [r[0] for r in cur.fetchall()]
+            
+            confidence_summary = {
+                "high": 0,
+                "medium": 0,
+                "low": 0
+            }
+            
+            from egg.core.engine import EggEngine
+            engine = EggEngine(db_path)
+            
+            for target in targets:
+                if "." in target:
+                    parts = target.split(".")
+                    method_name = parts[-1]
+                    declared_type = ".".join(parts[:-1])
+                    
+                    res = engine.resolve_call_site(declared_type, method_name, cur)
+                    resolution = res["resolution"]
+                    
+                    if resolution == "rta-resolved":
+                        confidence_summary["high"] += 1
+                    elif resolution in ("rta-narrowed", "rta-resolved-tentative", "static-assumed"):
+                        confidence_summary["medium"] += 1
+                    else:
+                        confidence_summary["low"] += 1
+                else:
+                    confidence_summary["low"] += 1
+            
         return {
             "status": "success",
             "total_symbols": total_symbols,
             "total_edges": total_edges,
             "symbols_summary": symbols_summary,
             "edges_summary": edges_summary,
-            "sql_tables": sql_tables
+            "sql_tables": sql_tables,
+            "confidence_summary": confidence_summary
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to query database statistics: {str(e)}")
