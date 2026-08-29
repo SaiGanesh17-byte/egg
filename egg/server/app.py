@@ -44,6 +44,9 @@ def scan_repository(request: ScanRequest):
             status_code=400, detail=f"Database storage path '{db_storage_path}' is not a directory. Please create it or configure it in Settings.")
 
     try:
+        import time
+        start_time = time.time()
+        
         db_path = get_db_path_for_repo(repo_path, db_storage_path)
         engine = EggEngine(db_path)
         stats = engine.scan_directory(repo_path)
@@ -66,7 +69,8 @@ def scan_repository(request: ScanRequest):
             "total_files": stats["total_files"],
             "indexed_files": stats["indexed_files"],
             "skipped_files": stats["skipped_files"],
-            "node_count": node_count
+            "node_count": node_count,
+            "scan_time_seconds": round(time.time() - start_time, 2)
         }
     except Exception as e:
         raise HTTPException(

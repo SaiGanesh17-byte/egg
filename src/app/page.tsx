@@ -72,7 +72,7 @@ export default function Home() {
   const [history, setHistory] = useState<string[]>([]);
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
   const [showSaveModal, setShowSaveModal] = useState(false);
-  const [statsData, setStatsData] = useState<{ total: number; indexed: number; nodes: number } | null>(null);
+  const [statsData, setStatsData] = useState<{ total: number; indexed: number; nodes: number; scan_time_seconds?: number } | null>(null);
 
   const [isLoadingTree, setIsLoadingTree] = useState(false);
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
@@ -151,6 +151,7 @@ export default function Home() {
         total: stats.total_files || 0,
         indexed: stats.indexed_files || 0,
         nodes: stats.node_count || 0,
+        scan_time_seconds: stats.scan_time_seconds,
       });
       setShowSaveModal(true);
     }
@@ -454,6 +455,9 @@ export default function Home() {
               <div className="break-all"><span className="text-zinc-500 font-semibold">Location:</span> {globalDbPath}/{repoPath ? repoPath.replace(/^\/|\\/, "").replace(/\//g, "_").replace(/\\/g, "_").replace(/:/g, "") : "repo"}/graph.db</div>
               <div><span className="text-zinc-500 font-semibold">CPG Nodes (Symbols):</span> {statsData?.nodes.toLocaleString()}</div>
               <div><span className="text-zinc-500 font-semibold">Files Scanned:</span> {statsData?.total} ({statsData?.indexed} indexed/updated)</div>
+              {statsData?.scan_time_seconds !== undefined && (
+                <div><span className="text-zinc-500 font-semibold">Time Elapsed:</span> {statsData.scan_time_seconds} seconds</div>
+              )}
             </div>
             <div className="flex justify-end pt-2">
               <button
