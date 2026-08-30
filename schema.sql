@@ -19,6 +19,9 @@ CREATE TABLE IF NOT EXISTS graph_edges (
     PRIMARY KEY (source_id, target_id, edge_type, label)
 );
 
+CREATE INDEX IF NOT EXISTS idx_edges_target ON graph_edges (target_id, edge_type);
+CREATE INDEX IF NOT EXISTS idx_edges_source ON graph_edges (source_id, edge_type);
+
 CREATE TABLE IF NOT EXISTS file_hashes (
     file_path TEXT PRIMARY KEY,
     content_hash TEXT NOT NULL,
@@ -32,4 +35,26 @@ CREATE TABLE IF NOT EXISTS ai_contexts (
     status TEXT DEFAULT 'PENDING',
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(symbol_id) REFERENCES symbols(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS discovered_declarations (
+    qualified_name TEXT PRIMARY KEY,
+    decl_kind TEXT NOT NULL,
+    file_path TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS class_hierarchy (
+    child_id TEXT NOT NULL,
+    parent_id TEXT NOT NULL,
+    relation_type TEXT NOT NULL,
+    unqualified INTEGER DEFAULT 0,
+    PRIMARY KEY (child_id, parent_id)
+);
+
+CREATE TABLE IF NOT EXISTS instantiations (
+    class_id TEXT NOT NULL,
+    instantiation_type TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    line_number INTEGER NOT NULL,
+    PRIMARY KEY (class_id, file_path, line_number)
 );
